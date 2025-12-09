@@ -1,27 +1,44 @@
 "use client";
 
-import { useRef, type ChangeEvent } from 'react';
+import { useRef, type ChangeEvent, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { UploadCloud } from 'lucide-react';
+import { useFirebase, initiateAnonymousSignIn, addDocumentNonBlocking } from '@/firebase';
+import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore';
+import { v4 as uuidv4 } from 'uuid';
 
 interface ExcelImporterProps {
-  onDataProcessed: (data: { headers: string[]; rows: string[][] }) => void;
+  onNewFileImported: (fileId: string) => void;
 }
 
-export function ExcelImporter({ onDataProcessed }: ExcelImporterProps) {
+export function ExcelImporter({ onNewFileImported }: ExcelImporterProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const { auth, user, firestore } = useFirebase();
 
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+  useEffect(() => {
+    if (auth && !user) {
+      initiateAnonymousSignIn(auth);
+    }
+  }, [auth, user]);
+
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file) {
+    if (!file || !user || !firestore) {
+      if (!user) {
+         toast({
+          variant: "destructive",
+          title: "Authentication Error",
+          description: "You must be signed in to import files.",
+        });
+      }
       return;
     }
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const data = e.target?.result;
         const workbook = XLSX.read(data, { type: 'array' });
@@ -42,23 +59,52 @@ export function ExcelImporter({ onDataProcessed }: ExcelImporterProps) {
         const headers = jsonData[0].slice(0, 5).map(String);
         const rows = jsonData.slice(1).map(row => row.slice(0, 5).map(String));
 
-        onDataProcessed({ headers, rows });
+        const excelFileId = uuidv4();
+        const fileRef = doc(firestore, `users/${user.uid}/excelFiles`, excelFileId);
+
+        const batch = writeBatch(firestore);
+
+        batch.set(fileRef, {
+            id: excelFileId,
+            fileName: file.name,
+            uploadDate: serverTimestamp(),
+            headers: headers
+        });
+
+        const rowsCollectionRef = collection(firestore, `users/${user.uid}/excelFiles/${excelFileId}/excelRows`);
+        
+        rows.forEach((row) => {
+            const rowId = uuidv4();
+            const rowRef = doc(rowsCollectionRef, rowId);
+            batch.set(rowRef, {
+                id: rowId,
+                excelFileId: excelFileId,
+                columnA: row[0] || "",
+                columnB: row[1] || "",
+                columnC: row[2] || "",
+                columnD: row[3] || "",
+                columnE: row[4] || "",
+            });
+        });
+
+        await batch.commit();
+
+        onNewFileImported(excelFileId);
 
         toast({
           title: "Import Successful",
-          description: `Successfully imported ${rows.length} rows from ${file.name}.`,
+          description: `Successfully imported and saved ${rows.length} rows from ${file.name}.`,
           className: 'bg-primary text-primary-foreground'
         });
 
       } catch (error) {
-        console.error("Error processing Excel file:", error);
+        console.error("Error processing and saving Excel file:", error);
         toast({
           variant: "destructive",
           title: "Import Failed",
-          description: "There was an error processing the Excel file. Please ensure it's a valid .xls or .xlsx file.",
+          description: "There was an error saving the Excel file. Please try again.",
         });
       } finally {
-        // Reset file input to allow re-uploading the same file
         if(fileInputRef.current) {
             fileInputRef.current.value = "";
         }
@@ -78,6 +124,15 @@ export function ExcelImporter({ onDataProcessed }: ExcelImporterProps) {
   };
 
   const handleButtonClick = () => {
+    if (!user) {
+      toast({
+        variant: "destructive",
+        title: "Please wait",
+        description: "Authenticating...",
+      });
+      if (auth) initiateAnonymousSignIn(auth);
+      return;
+    }
     fileInputRef.current?.click();
   };
 
@@ -87,7 +142,7 @@ export function ExcelImporter({ onDataProcessed }: ExcelImporterProps) {
         type="file"
         ref={fileInputRef}
         onChange={handleFileChange}
-        accept=".xlsx, .xls, .csv"
+        accept=".xlsx, .xls"
         className="hidden"
         aria-hidden="true"
       />
