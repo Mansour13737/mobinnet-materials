@@ -36,6 +36,7 @@ export default function Home() {
   const [isUploading, setIsUploading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [lastUploadedFileId, setLastUploadedFileId] = useState<string | null>(null);
 
   const { toast } = useToast();
   const { firestore, user, isUserLoading } = useFirebase();
@@ -53,16 +54,33 @@ export default function Home() {
   const { data: excelRows, isLoading: isLoadingRows } = useCollection<ExcelRow>(selectedFileRowsRef);
 
   useEffect(() => {
-    if (!selectedFileId && excelFiles && excelFiles.length > 0 && !parsedData) {
+    // If there's a recently uploaded file, select it.
+    if (lastUploadedFileId) {
+      setSelectedFileId(lastUploadedFileId);
+      setLastUploadedFileId(null); // Reset after selection
+    }
+    // Otherwise, if no file is selected but files exist, select the first one.
+    else if (!selectedFileId && excelFiles && excelFiles.length > 0 && !parsedData) {
       setSelectedFileId(excelFiles[0].id);
     }
-  }, [excelFiles, selectedFileId, parsedData]);
+  }, [excelFiles, selectedFileId, parsedData, lastUploadedFileId]);
   
   const tableData = useMemo(() => {
     if (parsedData) {
       return parsedData.rows;
     }
-    return excelRows ? excelRows.map(row => [row.columnA, row.columnB, row.columnC, row.columnD, row.columnE].filter(c => c !== undefined)) : [];
+    if (excelRows) {
+        return excelRows.map(row => {
+            const rowData = [row.columnA, row.columnB, row.columnC, row.columnD, row.columnE];
+            // Filter out trailing undefined or null values, but keep empty strings
+            let lastIndex = rowData.length - 1;
+            while(lastIndex >= 0 && rowData[lastIndex] === undefined) {
+                lastIndex--;
+            }
+            return rowData.slice(0, lastIndex + 1);
+        });
+    }
+    return [];
   }, [excelRows, parsedData]);
 
   const tableHeaders = useMemo(() => {
@@ -99,27 +117,27 @@ export default function Home() {
     }
 
     setIsUploading(true);
+    const newExcelFileId = uuidv4();
 
     try {
-      const excelFileId = uuidv4();
-      const fileRef = doc(firestore, `users/${user.uid}/excelFiles`, excelFileId);
+      const fileRef = doc(firestore, `users/${user.uid}/excelFiles`, newExcelFileId);
       const batch = writeBatch(firestore);
 
       batch.set(fileRef, {
-          id: excelFileId,
+          id: newExcelFileId,
           fileName: parsedData.fileName,
           uploadDate: serverTimestamp(),
           headers: parsedData.headers
       });
 
-      const rowsCollectionRef = collection(firestore, `users/${user.uid}/excelFiles/${excelFileId}/excelRows`);
+      const rowsCollectionRef = collection(firestore, `users/${user.uid}/excelFiles/${newExcelFileId}/excelRows`);
       
       parsedData.rows.forEach((row) => {
           const rowId = uuidv4();
           const rowRef = doc(rowsCollectionRef, rowId);
           batch.set(rowRef, {
               id: rowId,
-              excelFileId: excelFileId,
+              excelFileId: newExcelFileId,
               columnA: row[0] || "",
               columnB: row[1] || "",
               columnC: row[2] || "",
@@ -137,7 +155,7 @@ export default function Home() {
       });
 
       setParsedData(null);
-      setSelectedFileId(excelFileId);
+      setLastUploadedFileId(newExcelFileId);
 
     } catch (error) {
       console.error("Error uploading data:", error);
