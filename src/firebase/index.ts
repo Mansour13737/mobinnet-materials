@@ -21,7 +21,7 @@ export function initializeFirebase() {
       messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
   };
 
-  // If the Vercel public environment variables are set, use them.
+  // If the Vercel public environment variables are set (checked by projectId), use them.
   // Otherwise, fall back to the local firebaseConfig for local development.
   const configToUse = vercelEnvConfig.projectId ? vercelEnvConfig : localFirebaseConfig;
 
