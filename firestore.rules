@@ -1,0 +1,141 @@
+/**
+ * Core Philosophy: This ruleset implements a strict user-ownership model. All data,
+ * including Excel file metadata and their corresponding row data, is stored within a
+ * user-specific data tree. This ensures complete data isolation, where users can only
+ * ever access their own information.
+ *
+ * Data Structure: Data is hierarchically organized under the path `/users/{userId}`.
+ * A user's Excel files are stored in a subcollection at `/excelFiles/{excelFileId}`,
+ * and the rows for each file are further nested in a subcollection at `/excelRows/{excelRowId}`.
+ *
+ * Key Security Decisions:
+ * - Strict Ownership: All operations (read, write, delete) are restricted to the
+ *   authenticated user whose UID matches the `{userId}` in the document path.
+ * - No Public Data: There are no top-level collections. All data is private.
+ * - No User Listing: It is not possible to list users or any data belonging to
+ *   other users.
+ * - Path-Based Authorization: The rules rely on the document path for authorization,
+ *   which is highly performant and avoids costly `get()` calls to other documents.
+ * - Relational Integrity: On creation, the rules enforce that document fields
+ *   (like `id` and parent IDs) correctly match the document's path to prevent
+ *   data inconsistencies. These relational fields are immutable after creation.
+ */
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --------------------------------------------------------------------
+    // Helper Functions
+    // --------------------------------------------------------------------
+
+    /**
+     * Checks if a user is authenticated.
+     */
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    /**
+     * Checks if the currently authenticated user's UID matches the given userId.
+     * This is the foundation of the ownership model.
+     * @param userId The UID of the user to check against.
+     */
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    /**
+     * Checks if the user is the owner AND the document already exists.
+     * Used for safe update and delete operations.
+     * @param userId The UID of the user to check against.
+     */
+    function isExistingOwner(userId) {
+      return isOwner(userId) && resource != null;
+    }
+
+    /**
+     * Validates required relational fields for a new ExcelFile document.
+     * Enforces consistency between the document's path and its internal ID.
+     */
+    function hasValidExcelFileDataOnCreate(excelFileId) {
+      return request.resource.data.id == excelFileId;
+    }
+
+    /**
+     * Enforces immutability for the critical ID field on ExcelFile updates.
+     */
+    function isExcelFileImmutable() {
+      return request.resource.data.id == resource.data.id;
+    }
+
+    /**
+     * Validates required relational fields for a new ExcelRow document.
+     * Enforces consistency with both its own ID and its parent file's ID.
+     */
+    function hasValidExcelRowDataOnCreate(excelFileId, excelRowId) {
+      let data = request.resource.data;
+      return data.id == excelRowId && data.excelFileId == excelFileId;
+    }
+
+    /**
+     * Enforces immutability for critical relational fields on ExcelRow updates.
+     */
+    function isExcelRowImmutable() {
+      let incomingData = request.resource.data;
+      let existingData = resource.data;
+      return incomingData.id == existingData.id && incomingData.excelFileId == existingData.excelFileId;
+    }
+
+    // --------------------------------------------------------------------
+    // Collection Rules
+    // --------------------------------------------------------------------
+
+    match /users/{userId} {
+      /**
+       * @description A user can only access data within their own document tree.
+       * @path /users/{userId}
+       * @allow (read/write) User 'abc' accessing anything under `/users/abc`.
+       * @deny (read/write) User 'xyz' trying to access anything under `/users/abc`.
+       * @principle Restricts access to a user's own data tree.
+       */
+      allow read, write: if isOwner(userId);
+
+      /**
+       * @description Defines rules for Excel file metadata documents.
+       * @path /users/{userId}/excelFiles/{excelFileId}
+       * @allow (create) User 'abc' creates a new document at `/users/abc/excelFiles/file123`.
+       * @deny (create) User 'xyz' attempts to create a document at `/users/abc/excelFiles/file456`.
+       * @deny (update) User 'abc' tries to change the `id` field of an existing file.
+       * @principle Enforces document ownership for all operations and validates relational integrity.
+       */
+      match /excelFiles/{excelFileId} {
+        allow get: if isOwner(userId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && hasValidExcelFileDataOnCreate(excelFileId);
+        allow update: if isExistingOwner(userId) && isExcelFileImmutable();
+        allow delete: if isExistingOwner(userId);
+
+        /**
+         * @description Defines rules for individual Excel row documents.
+         * @path /users/{userId}/excelFiles/{excelFileId}/excelRows/{excelRowId}
+         * @allow (list) User 'abc' lists all rows for their own file at `/users/abc/excelFiles/file123/excelRows`.
+         * @deny (get) User 'xyz' tries to read a row at `/users/abc/excelFiles/file123/excelRows/row001`.
+         * @deny (create) User 'abc' tries to create a row in `file123` but sets the internal `excelFileId` to `file456`.
+         * @principle Inherits ownership from the parent path and ensures data consistency within the subcollection.
+         */
+        match /excelRows/{excelRowId} {
+          allow get: if isOwner(userId);
+          allow list: if isOwner(userId);
+          allow create: if isOwner(userId) && hasValidExcelRowDataOnCreate(excelFileId, excelRowId);
+          allow update: if isExistingOwner(userId) && isExcelRowImmutable();
+          allow delete: if isExistingOwner(userId);
+        }
+      }
+    }
+
+    // Default deny-all for any path not explicitly matched above.
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

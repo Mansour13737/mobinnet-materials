@@ -1,0 +1,130 @@
+{
+  "entities": {
+    "ExcelFile": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ExcelFile",
+      "type": "object",
+      "description": "Represents an Excel file that has been imported.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the ExcelFile entity."
+        },
+        "fileName": {
+          "type": "string",
+          "description": "The name of the imported Excel file."
+        },
+        "uploadDate": {
+          "type": "string",
+          "description": "The date and time when the Excel file was uploaded.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "fileName",
+        "uploadDate"
+      ]
+    },
+    "ExcelRow": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ExcelRow",
+      "type": "object",
+      "description": "Represents a single row of data from an imported Excel file.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the ExcelRow entity."
+        },
+        "excelFileId": {
+          "type": "string",
+          "description": "Reference to ExcelFile. (Relationship: ExcelFile 1:N ExcelRow)"
+        },
+        "columnA": {
+          "type": "string",
+          "description": "Data from column A of the Excel file."
+        },
+        "columnB": {
+          "type": "string",
+          "description": "Data from column B of the Excel file."
+        },
+        "columnC": {
+          "type": "string",
+          "description": "Data from column C of the Excel file."
+        },
+        "columnD": {
+          "type": "string",
+          "description": "Data from column D of the Excel file."
+        },
+        "columnE": {
+          "type": "string",
+          "description": "Data from column E of the Excel file."
+        }
+      },
+      "required": [
+        "id",
+        "excelFileId",
+        "columnA",
+        "columnB",
+        "columnC",
+        "columnD",
+        "columnE"
+      ]
+    }
+  },
+  "auth": {
+    "providers": [
+      "password",
+      "anonymous"
+    ]
+  },
+  "firestore": {
+    "structure": [
+      {
+        "path": "/users/{userId}/excelFiles/{excelFileId}",
+        "definition": {
+          "entityName": "ExcelFile",
+          "schema": {
+            "$ref": "#/backend/entities/ExcelFile"
+          },
+          "description": "Stores Excel file metadata.  Path-based ownership for users. Requires userId and excelFileId parameters.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The ID of the user who owns the Excel file."
+            },
+            {
+              "name": "excelFileId",
+              "description": "The unique ID of the Excel file."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/users/{userId}/excelFiles/{excelFileId}/excelRows/{excelRowId}",
+        "definition": {
+          "entityName": "ExcelRow",
+          "schema": {
+            "$ref": "#/backend/entities/ExcelRow"
+          },
+          "description": "Stores individual rows from an Excel file. Path-based ownership under a specific user and file. Requires userId, excelFileId, and excelRowId parameters.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The ID of the user who owns the Excel file and row."
+            },
+            {
+              "name": "excelFileId",
+              "description": "The ID of the Excel file to which this row belongs."
+            },
+            {
+              "name": "excelRowId",
+              "description": "The unique ID of the Excel row."
+            }
+          ]
+        }
+      }
+    ],
+    "reasoning": "The Firestore structure is designed to store Excel files and their row data in a user-specific hierarchy. Each user has their own collection of Excel files, and each Excel file contains a subcollection of rows. This structure ensures data isolation and simplifies security rules based on user ownership. The structure uses path-based ownership for ExcelFile and ExcelRow, ensuring clear ownership semantics and enabling straightforward security rules. This inherently provides authorization independence; no `get()` calls are needed to check user ownership. The structure also supports QAPs because listing operations are scoped to the user's files and rows, preventing unauthorized access to other users' data."
+  }
+}
