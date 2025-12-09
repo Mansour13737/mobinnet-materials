@@ -22,6 +22,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Progress } from "@/components/ui/progress";
+
 
 interface ParsedData {
   fileName: string;
@@ -29,11 +31,14 @@ interface ParsedData {
   rows: string[][];
 }
 
+const BATCH_SIZE = 499; // Firestore batch limit is 500
+
 export default function Home() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [parsedData, setParsedData] = useState<ParsedData | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [lastUploadedFileId, setLastUploadedFileId] = useState<string | null>(null);
@@ -71,17 +76,20 @@ export default function Home() {
     }
     if (excelRows) {
         return excelRows.map(row => {
-            const rowData = [row.columnA, row.columnB, row.columnC, row.columnD, row.columnE];
-            // Filter out trailing undefined or null values, but keep empty strings
-            let lastIndex = rowData.length - 1;
-            while(lastIndex >= 0 && rowData[lastIndex] === undefined) {
-                lastIndex--;
+            const rowData: string[] = [];
+            // Ensure we push properties in order and only if they exist
+            const columns: (keyof ExcelRow)[] = ['columnA', 'columnB', 'columnC', 'columnD', 'columnE'];
+            const selectedFile = excelFiles?.find(f => f.id === selectedFileId);
+            const headerCount = selectedFile?.headers?.length || 0;
+
+            for (let i = 0; i < headerCount; i++) {
+                rowData.push(row[columns[i]] || "");
             }
-            return rowData.slice(0, lastIndex + 1);
+            return rowData;
         });
     }
     return [];
-  }, [excelRows, parsedData]);
+  }, [excelRows, parsedData, excelFiles, selectedFileId]);
 
   const tableHeaders = useMemo(() => {
     if (parsedData) {
@@ -106,7 +114,7 @@ export default function Home() {
     setSelectedFileId(null); // Deselect any firebase file
   }
 
-  const handleUpload = () => {
+  const handleUpload = async () => {
     if (!parsedData || !user || !firestore) {
       toast({
         variant: "destructive",
@@ -117,64 +125,86 @@ export default function Home() {
     }
 
     setIsUploading(true);
+    setUploadProgress(0);
     const newExcelFileId = uuidv4();
+    const totalRows = parsedData.rows.length;
 
-    const fileRef = doc(firestore, `users/${user.uid}/excelFiles`, newExcelFileId);
-    const batch = writeBatch(firestore);
+    try {
+      // First, create the main file document
+      const fileRef = doc(firestore, `users/${user.uid}/excelFiles`, newExcelFileId);
+      const fileData = {
+          id: newExcelFileId,
+          fileName: parsedData.fileName,
+          uploadDate: serverTimestamp(),
+          headers: parsedData.headers
+      };
+      
+      const fileBatch = writeBatch(firestore);
+      fileBatch.set(fileRef, fileData);
+      await fileBatch.commit();
+      
+      setUploadProgress(5); // Initial progress
 
-    const fileData = {
-        id: newExcelFileId,
-        fileName: parsedData.fileName,
-        uploadDate: serverTimestamp(),
-        headers: parsedData.headers
-    };
-    batch.set(fileRef, fileData);
-
-    const rowsCollectionRef = collection(firestore, `users/${user.uid}/excelFiles/${newExcelFileId}/excelRows`);
-    
-    parsedData.rows.forEach((row) => {
-        const rowId = uuidv4();
-        const rowRef = doc(rowsCollectionRef, rowId);
-        batch.set(rowRef, {
-            id: rowId,
-            excelFileId: newExcelFileId,
-            columnA: row[0] || "",
-            columnB: row[1] || "",
-            columnC: row[2] || "",
-            columnD: row[3] || "",
-            columnE: row[4] || "",
+      // Then, batch-upload the rows
+      for (let i = 0; i < totalRows; i += BATCH_SIZE) {
+        const batch = writeBatch(firestore);
+        const chunk = parsedData.rows.slice(i, i + BATCH_SIZE);
+        
+        chunk.forEach((row) => {
+            const rowId = uuidv4();
+            const rowRef = doc(firestore, `users/${user.uid}/excelFiles/${newExcelFileId}/excelRows`, rowId);
+            batch.set(rowRef, {
+                id: rowId,
+                excelFileId: newExcelFileId,
+                columnA: row[0] || "",
+                columnB: row[1] || "",
+                columnC: row[2] || "",
+                columnD: row[3] || "",
+                columnE: row[4] || "",
+            });
         });
-    });
 
-    batch.commit().then(() => {
+        await batch.commit();
+
+        const newProgress = Math.min(95, Math.round(((i + chunk.length) / totalRows) * 90) + 5);
+        setUploadProgress(newProgress);
+      }
+      
+      setUploadProgress(100);
+
+      setTimeout(() => {
         toast({
-            title: "Upload Successful",
-            description: `Successfully uploaded ${parsedData.rows.length} rows from ${parsedData.fileName}.`,
-            className: 'bg-primary text-primary-foreground'
+          title: "Upload Successful",
+          description: `Successfully uploaded ${totalRows} rows from ${parsedData.fileName}.`,
+          className: 'bg-primary text-primary-foreground'
         });
         setParsedData(null);
         setLastUploadedFileId(newExcelFileId);
-    }).catch(serverError => {
-        console.error("Error uploading data:", serverError);
-        const permissionError = new FirestorePermissionError({
-            path: `users/${user.uid}/excelFiles/${newExcelFileId}`,
-            operation: 'write',
-            requestResourceData: {
-                file: fileData,
-                rowCount: parsedData.rows.length,
-            },
-        });
-        errorEmitter.emit('permission-error', permissionError);
-
-        toast({
-            variant: "destructive",
-            title: "Upload Failed",
-            description: "There was an error uploading your data. Check the developer console for details.",
-        });
-    }).finally(() => {
         setIsUploading(false);
-    });
+      }, 500);
+
+
+    } catch (serverError) {
+      console.error("Error uploading data:", serverError);
+      const permissionError = new FirestorePermissionError({
+          path: `users/${user.uid}/excelFiles/${newExcelFileId}`,
+          operation: 'write',
+          requestResourceData: {
+              fileName: parsedData.fileName,
+              rowCount: parsedData.rows.length,
+          },
+      });
+      errorEmitter.emit('permission-error', permissionError);
+
+      toast({
+          variant: "destructive",
+          title: "Upload Failed",
+          description: "There was an error uploading your data. Check the developer console for details.",
+      });
+      setIsUploading(false);
+    }
   };
+
 
   const handleDeleteFile = async () => {
     if (!selectedFileId || !user || !firestore) {
@@ -188,20 +218,23 @@ export default function Home() {
 
     setIsDeleting(true);
     try {
-      const batch = writeBatch(firestore);
-
-      // 1. Delete all rows in the subcollection
       const rowsRef = collection(firestore, `users/${user.uid}/excelFiles/${selectedFileId}/excelRows`);
       const rowsSnapshot = await getDocs(rowsRef);
-      rowsSnapshot.forEach(rowDoc => {
-        batch.delete(rowDoc.ref);
-      });
 
-      // 2. Delete the main file document
+      // Delete rows in batches
+      const rowIds = rowsSnapshot.docs.map(d => d.id);
+      for (let i = 0; i < rowIds.length; i += BATCH_SIZE) {
+        const batch = writeBatch(firestore);
+        const chunk = rowIds.slice(i, i + BATCH_SIZE);
+        chunk.forEach(rowId => {
+          batch.delete(doc(rowsRef, rowId));
+        });
+        await batch.commit();
+      }
+
+      // Delete the main file document
       const fileRef = doc(firestore, `users/${user.uid}/excelFiles`, selectedFileId);
-      batch.delete(fileRef);
-
-      await batch.commit();
+      await deleteDoc(fileRef);
 
       toast({
         title: "Delete Successful",
@@ -212,6 +245,11 @@ export default function Home() {
 
     } catch (error) {
       console.error("Error deleting file:", error);
+       const permissionError = new FirestorePermissionError({
+          path: `users/${user.uid}/excelFiles/${selectedFileId}`,
+          operation: 'delete',
+      });
+      errorEmitter.emit('permission-error', permissionError);
        toast({
         variant: "destructive",
         title: "Delete Failed",
@@ -224,7 +262,7 @@ export default function Home() {
   }
 
   const isLoading = isUserLoading || isLoadingFiles || (isLoadingRows && !parsedData);
-  const hasData = (parsedData && parsedData.rows.length > 0) || (excelRows && excelRows.length > 0);
+  const hasData = (parsedData && parsedData.rows.length > 0) || (tableData && tableData.length > 0);
   const selectedFileName = excelFiles?.find(f => f.id === selectedFileId)?.fileName;
 
   return (
@@ -275,6 +313,14 @@ export default function Home() {
               <div className="flex flex-col items-center justify-center text-center p-12 h-full flex-grow">
                 <Loader2 className="h-16 w-16 text-muted-foreground animate-spin mb-4" />
                 <p className="text-muted-foreground">Loading data...</p>
+              </div>
+            ) : isUploading ? (
+              <div className="flex flex-col items-center justify-center text-center p-12 h-full flex-grow">
+                <h2 className="text-2xl font-semibold text-card-foreground mb-4">Uploading Data...</h2>
+                <div className="w-full max-w-md">
+                   <Progress value={uploadProgress} className="w-full" />
+                   <p className="text-muted-foreground mt-2">{Math.round(uploadProgress)}%</p>
+                </div>
               </div>
             ) : hasData ? (
               <>

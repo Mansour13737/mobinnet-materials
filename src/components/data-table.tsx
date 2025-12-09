@@ -52,12 +52,14 @@ export function DataTable({ headers, data, searchTerm }: DataTableProps) {
     }
   };
 
+  const startIndex = (currentPage - 1) * ROWS_PER_PAGE;
+
   return (
     <Card className="w-full shadow-lg transition-all duration-300 flex flex-col flex-grow">
       <CardHeader>
         <CardTitle>Imported Data</CardTitle>
         <CardDescription>
-          Showing {filteredData.length > 0 ? currentData.length : 0} of {data.length} records.
+          Showing {filteredData.length > 0 ? `${startIndex + 1}-${startIndex + currentData.length}` : 0} of {filteredData.length} records. ({data.length} total)
         </CardDescription>
       </CardHeader>
       <CardContent className="flex-grow">
