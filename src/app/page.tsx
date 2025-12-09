@@ -55,17 +55,57 @@ export default function Home() {
 
   const { data: excelFiles, isLoading: isLoadingFiles } = useCollection<ExcelFile>(userFilesRef);
   
-  useEffect(() => {
-    // Auto-select the first file if files are loaded and none is selected
-    if (!selectedFileId && excelFiles && excelFiles.length > 0) {
-      setSelectedFileId(excelFiles[0].id);
+  const handleFetchRows = async (fileId: string) => {
+    if (!fileId || !user || !firestore) {
+      return;
     }
-    // Auto-select a newly uploaded file
-    if (lastUploadedFileId) {
-      setSelectedFileId(lastUploadedFileId);
+    setIsFetching(true);
+    setFetchingProgress(0);
+    setFetchedRows(null);
+
+    const progressInterval = setInterval(() => {
+      setFetchingProgress(prev => (prev < 90 ? prev + 10 : 90));
+    }, 200);
+
+    try {
+      const rowsRef = query(collection(firestore, `users/${user.uid}/excelFiles/${fileId}/excelRows`), orderBy("rowIndex"));
+      const snapshot = await getDocs(rowsRef);
+      const rows = snapshot.docs.map(doc => doc.data() as ExcelRow);
+      setFetchedRows(rows);
+    } catch (error) {
+       console.error("Error fetching rows:", error);
+       const permissionError = new FirestorePermissionError({
+          path: `users/${user.uid}/excelFiles/${fileId}/excelRows`,
+          operation: 'list',
+      });
+      errorEmitter.emit('permission-error', permissionError);
+      toast({
+        variant: "destructive",
+        title: "Fetch Failed",
+        description: "Could not load data from the database.",
+      });
+      setFetchedRows(null);
+    } finally {
+      clearInterval(progressInterval);
+      setFetchingProgress(100);
+      setTimeout(() => setIsFetching(false), 500);
+    }
+  };
+  
+  useEffect(() => {
+    const shouldSelectFile = !selectedFileId && excelFiles && excelFiles.length > 0;
+    if (shouldSelectFile) {
+      const fileToSelect = lastUploadedFileId || excelFiles[0].id;
+      setSelectedFileId(fileToSelect);
       setLastUploadedFileId(null);
     }
   }, [excelFiles, selectedFileId, lastUploadedFileId]);
+  
+  useEffect(() => {
+    if (selectedFileId && !parsedData) {
+      handleFetchRows(selectedFileId);
+    }
+  }, [selectedFileId, parsedData]);
   
   const selectedFile = useMemo(() => {
       if (!selectedFileId || !excelFiles) return null;
@@ -78,11 +118,13 @@ export default function Home() {
     }
     
     if (fetchedRows && selectedFile) {
+        const headerCount = selectedFile.headers?.length || 0;
+        if (headerCount === 0) return [];
+        
         return fetchedRows.map(row => {
             const rowData: string[] = [];
             const columns: (keyof ExcelRow)[] = ['columnA', 'columnB', 'columnC', 'columnD', 'columnE'];
-            const headerCount = selectedFile.headers?.length || 0;
-
+            
             for (let i = 0; i < headerCount; i++) {
                 const columnKey = columns[i];
                 rowData.push(row[columnKey] || "");
@@ -106,16 +148,16 @@ export default function Home() {
   }, [selectedFile, parsedData]);
 
   const handleFileSelect = (fileId: string) => {
-    if (fileId) {
+    if (fileId && fileId !== selectedFileId) {
       setParsedData(null);
+      setFetchedRows(null);
       setSelectedFileId(fileId);
-      setFetchedRows(null); // Reset fetched rows when changing file
     }
   }
 
   const onDataParsed = (data: ParsedData) => {
     setParsedData(data);
-    setSelectedFileId(null); // Deselect any firebase file
+    setSelectedFileId(null); 
     setFetchedRows(null);
   }
 
@@ -267,50 +309,12 @@ export default function Home() {
       setIsDeleting(false);
       setIsDeleteDialogOpen(false);
     }
-  }
-
-  const handleFetchRows = async () => {
-    if (!selectedFileId || !user || !firestore) {
-      toast({ variant: "destructive", title: "Error", description: "No file selected." });
-      return;
-    }
-    setIsFetching(true);
-    setFetchingProgress(0);
-
-    const progressInterval = setInterval(() => {
-      setFetchingProgress(prev => (prev < 90 ? prev + 10 : 90));
-    }, 200);
-
-    try {
-      const rowsRef = query(collection(firestore, `users/${user.uid}/excelFiles/${selectedFileId}/excelRows`), orderBy("rowIndex"));
-      const snapshot = await getDocs(rowsRef);
-      const rows = snapshot.docs.map(doc => doc.data() as ExcelRow);
-      setFetchedRows(rows);
-    } catch (error) {
-       console.error("Error fetching rows:", error);
-       const permissionError = new FirestorePermissionError({
-          path: `users/${user.uid}/excelFiles/${selectedFileId}/excelRows`,
-          operation: 'list',
-      });
-      errorEmitter.emit('permission-error', permissionError);
-      toast({
-        variant: "destructive",
-        title: "Fetch Failed",
-        description: "Could not load data from the database.",
-      });
-      setFetchedRows(null);
-    } finally {
-      clearInterval(progressInterval);
-      setFetchingProgress(100);
-      setTimeout(() => setIsFetching(false), 500);
-    }
   };
-
 
   const isLoading = isUserLoading || isLoadingFiles;
   const hasData = (parsedData && parsedData.rows.length > 0) || (fetchedRows && fetchedRows.length > 0);
   const selectedFileName = selectedFile?.fileName;
-  const showLoadButton = selectedFileId && !parsedData && !fetchedRows && !isFetching;
+  const isDisplayingImportedData = !!parsedData;
 
   return (
     <>
@@ -323,7 +327,7 @@ export default function Home() {
             <div className="flex flex-col sm:flex-row items-center gap-2">
               {excelFiles && excelFiles.length > 0 && (
                   <div className="flex items-center gap-2">
-                    <Select onValueChange={handleFileSelect} value={parsedData ? '' : selectedFileId || ''}>
+                    <Select onValueChange={handleFileSelect} value={isDisplayingImportedData ? '' : selectedFileId || ''}>
                     <SelectTrigger className="w-[240px]">
                       <SelectValue placeholder="Select an imported file" />
                     </SelectTrigger>
@@ -335,7 +339,7 @@ export default function Home() {
                         ))}
                     </SelectContent>
                   </Select>
-                  {selectedFileId && !parsedData && (
+                  {selectedFileId && !isDisplayingImportedData && (
                     <Button variant="outline" size="icon" onClick={() => setIsDeleteDialogOpen(true)} disabled={isDeleting}>
                       <Trash2 className="h-5 w-5" />
                     </Button>
@@ -343,7 +347,7 @@ export default function Home() {
                   </div>
               )}
               <ExcelImporter onDataParsed={onDataParsed} disabled={isUploading || isDeleting} />
-              {parsedData && (
+              {isDisplayingImportedData && (
                 <Button onClick={handleUpload} disabled={isUploading}>
                   {isUploading ? (
                     <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -391,24 +395,12 @@ export default function Home() {
                 </div>
                 <DataTable headers={tableHeaders} data={tableData} searchTerm={searchTerm} />
               </>
-            ) : showLoadButton ? (
-               <div className="flex flex-col items-center justify-center text-center p-12 bg-card rounded-lg border-2 border-dashed border-border h-full flex-grow">
-                <Database className="h-16 w-16 text-muted-foreground mb-4" />
-                <h2 className="text-2xl font-semibold text-card-foreground mb-2">File Ready to Load</h2>
-                <p className="text-muted-foreground max-w-md mb-6">
-                  Click the button below to load the data for <strong className="font-medium">{selectedFileName}</strong> from the database.
-                </p>
-                <Button onClick={handleFetchRows}>
-                  <Loader2 className="mr-2 h-5 w-5" />
-                  Load Data
-                </Button>
-              </div>
             ) : (
               <div className="flex flex-col items-center justify-center text-center p-12 bg-card rounded-lg border-2 border-dashed border-border h-full flex-grow">
                 <FileSpreadsheet className="h-16 w-16 text-muted-foreground mb-4" />
                 <h2 className="text-2xl font-semibold text-card-foreground mb-2">No Data to Display</h2>
                 <p className="text-muted-foreground max-w-md">
-                  Import an Excel file (.xls or .xlsx) to see your data. Only columns A through E will be displayed.
+                  Import an Excel file (.xls or .xlsx) to see your data, or select an existing file from the dropdown. Only columns A through E will be displayed.
                 </p>
               </div>
             )}
