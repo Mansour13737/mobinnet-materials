@@ -11,19 +11,21 @@ export function initializeFirebase() {
     return getSdks(getApp());
   }
 
-  // This is the recommended approach for Vercel deployments
-  // https://firebase.google.com/docs/hosting/frameworks/nextjs#initialize-firebase
-  const firebaseConfig = {
-      apiKey: process.env.FIREBASE_API_KEY,
-      authDomain: process.env.FIREBASE_AUTH_DOMAIN,
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      appId: process.env.FIREBASE_APP_ID,
-      messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+  // For deployments on Vercel, we need to use public environment variables
+  // that are exposed to the client-side.
+  const vercelEnvConfig = {
+      apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+      authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+      appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+      messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
   };
 
-  // If the Vercel environment variables are not set, fall back to the local config.
-  // This is useful for local development.
-  const app = initializeApp(firebaseConfig.apiKey ? firebaseConfig : localFirebaseConfig);
+  // If the Vercel public environment variables are set, use them.
+  // Otherwise, fall back to the local firebaseConfig for local development.
+  const configToUse = vercelEnvConfig.projectId ? vercelEnvConfig : localFirebaseConfig;
+
+  const app = initializeApp(configToUse);
   
   return getSdks(app);
 }
