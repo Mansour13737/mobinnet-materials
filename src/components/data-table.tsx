@@ -52,14 +52,12 @@ export function DataTable({ headers, data, searchTerm }: DataTableProps) {
     }
   };
 
-  const startIndex = (currentPage - 1) * ROWS_PER_PAGE;
-
   return (
     <Card className="w-full shadow-lg transition-all duration-300 flex flex-col flex-grow">
       <CardHeader>
         <CardTitle>Imported Data</CardTitle>
         <CardDescription>
-          Showing {filteredData.length} of {data.length} records.
+          Showing {filteredData.length > 0 ? currentData.length : 0} of {data.length} records.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex-grow">
@@ -67,7 +65,6 @@ export function DataTable({ headers, data, searchTerm }: DataTableProps) {
             <Table>
                 <TableHeader className="bg-muted/50">
                     <TableRow>
-                    <TableHead className="font-bold w-[50px]">No.</TableHead>
                     {headers.map((header, index) => (
                         <TableHead key={index} className="font-bold">{header || `Column ${String.fromCharCode(65 + index)}`}</TableHead>
                     ))}
@@ -76,14 +73,13 @@ export function DataTable({ headers, data, searchTerm }: DataTableProps) {
                 <TableBody>
                     {currentData.length > 0 ? currentData.map((row, rowIndex) => (
                       <TableRow key={rowIndex} className="hover:bg-accent/50">
-                          <TableCell>{startIndex + rowIndex + 1}</TableCell>
                           {headers.map((_, cellIndex) => (
                             <TableCell key={cellIndex}>{row[cellIndex] || ''}</TableCell>
                           ))}
                       </TableRow>
                     )) : (
                       <TableRow>
-                        <TableCell colSpan={headers.length + 1} className="h-24 text-center">
+                        <TableCell colSpan={headers.length} className="h-24 text-center">
                           No matching records found.
                         </TableCell>
                       </TableRow>
