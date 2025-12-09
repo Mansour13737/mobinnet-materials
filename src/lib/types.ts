@@ -9,6 +9,7 @@ export interface ExcelFile {
 export interface ExcelRow {
     id: string;
     excelFileId: string;
+    rowIndex: number;
     columnA: string;
     columnB: string;
     columnC: string;

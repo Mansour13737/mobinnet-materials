@@ -6,7 +6,7 @@ import { DataTable } from "@/components/data-table";
 import { FileSpreadsheet, Search, Loader2, Upload, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useFirebase, useCollection, useMemoFirebase, errorEmitter, FirestorePermissionError } from "@/firebase";
-import { collection, query, orderBy, writeBatch, doc, serverTimestamp, getDocs } from "firebase/firestore";
+import { collection, query, orderBy, writeBatch, doc, serverTimestamp, getDocs, deleteDoc } from "firebase/firestore";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ExcelFile, ExcelRow } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -53,7 +53,7 @@ export default function Home() {
   const { data: excelFiles, isLoading: isLoadingFiles } = useCollection<ExcelFile>(userFilesRef);
 
   const selectedFileRowsRef = useMemoFirebase(() =>
-    user && firestore && selectedFileId ? collection(firestore, `users/${user.uid}/excelFiles/${selectedFileId}/excelRows`) : null
+    user && firestore && selectedFileId ? query(collection(firestore, `users/${user.uid}/excelFiles/${selectedFileId}/excelRows`), orderBy("rowIndex")) : null
   , [firestore, user, selectedFileId]);
 
   const { data: excelRows, isLoading: isLoadingRows } = useCollection<ExcelRow>(selectedFileRowsRef);
@@ -150,12 +150,13 @@ export default function Home() {
         const batch = writeBatch(firestore);
         const chunk = parsedData.rows.slice(i, i + BATCH_SIZE);
         
-        chunk.forEach((row) => {
+        chunk.forEach((row, rowIndex) => {
             const rowId = uuidv4();
             const rowRef = doc(firestore, `users/${user.uid}/excelFiles/${newExcelFileId}/excelRows`, rowId);
             batch.set(rowRef, {
                 id: rowId,
                 excelFileId: newExcelFileId,
+                rowIndex: i + rowIndex,
                 columnA: row[0] || "",
                 columnB: row[1] || "",
                 columnC: row[2] || "",
