@@ -59,9 +59,9 @@ export default function Home() {
     }
     if (excelFiles && selectedFileId) {
         const selectedFile = excelFiles.find(f => f.id === selectedFileId);
-        return selectedFile?.headers || ['A', 'B', 'C', 'D', 'E'];
+        return selectedFile?.headers || [];
     }
-    return ['A', 'B', 'C', 'D', 'E'];
+    return [];
   }, [excelFiles, selectedFileId, parsedData]);
 
   const handleFileSelect = (fileId: string) => {

@@ -67,7 +67,7 @@ export function DataTable({ headers, data, searchTerm }: DataTableProps) {
             <Table>
                 <TableHeader className="bg-muted/50">
                     <TableRow>
-                    <TableHead className="font-bold w-[50px]">#</TableHead>
+                    <TableHead className="font-bold w-[50px]">No.</TableHead>
                     {headers.map((header, index) => (
                         <TableHead key={index} className="font-bold">{header || `Column ${String.fromCharCode(65 + index)}`}</TableHead>
                     ))}
