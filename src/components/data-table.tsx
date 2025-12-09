@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Table,
   TableHeader,
@@ -17,18 +17,34 @@ const ROWS_PER_PAGE = 10;
 interface DataTableProps {
   headers: string[];
   data: string[][];
+  searchTerm: string;
 }
 
-export function DataTable({ headers, data }: DataTableProps) {
+export function DataTable({ headers, data, searchTerm }: DataTableProps) {
   const [currentPage, setCurrentPage] = useState(1);
 
-  const totalPages = useMemo(() => Math.ceil(data.length / ROWS_PER_PAGE), [data.length]);
+  const filteredData = useMemo(() => {
+    if (!searchTerm) {
+      return data;
+    }
+    return data.filter(row =>
+      row.some(cell =>
+        cell.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+    );
+  }, [data, searchTerm]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm]);
+
+  const totalPages = useMemo(() => Math.ceil(filteredData.length / ROWS_PER_PAGE), [filteredData.length]);
   
   const currentData = useMemo(() => {
     const startIndex = (currentPage - 1) * ROWS_PER_PAGE;
     const endIndex = startIndex + ROWS_PER_PAGE;
-    return data.slice(startIndex, endIndex);
-  }, [data, currentPage]);
+    return filteredData.slice(startIndex, endIndex);
+  }, [filteredData, currentPage]);
 
   const handlePageChange = (page: number) => {
     if (page >= 1 && page <= totalPages) {
@@ -37,15 +53,15 @@ export function DataTable({ headers, data }: DataTableProps) {
   };
 
   return (
-    <Card className="w-full shadow-lg transition-all duration-300">
+    <Card className="w-full shadow-lg transition-all duration-300 flex flex-col flex-grow">
       <CardHeader>
         <CardTitle>Imported Data</CardTitle>
         <CardDescription>
-          Showing {currentData.length} of {data.length} records.
+          Showing {filteredData.length} of {data.length} records.
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <div className="relative overflow-x-auto rounded-md border">
+      <CardContent className="flex-grow">
+        <div className="relative overflow-x-auto rounded-md border h-full">
             <Table>
                 <TableHeader className="bg-muted/50">
                     <TableRow>
@@ -64,7 +80,7 @@ export function DataTable({ headers, data }: DataTableProps) {
                     )) : (
                       <TableRow>
                         <TableCell colSpan={headers.length} className="h-24 text-center">
-                          No data to display for this page.
+                          No matching records found.
                         </TableCell>
                       </TableRow>
                     )}
