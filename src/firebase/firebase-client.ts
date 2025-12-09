@@ -36,19 +36,8 @@ function initialize(): FirebaseServices {
  * This function ensures Firebase is only initialized on the client-side.
  */
 export function getFirebaseClientServices(): FirebaseServices {
-  // If running on the server, throw an error or return dummy objects,
-  // but since this is in a 'use client' context for layout, it will run on the client.
   if (typeof window === 'undefined') {
-    // This will be replaced by the client-side execution.
-    // We return a structure that matches the type but won't be used.
-    // A better approach is to ensure this function is only called on the client.
-    // The RootLayout ensures this.
-    const dummyApp = { name: 'server-dummy', options: {}, automaticDataCollectionEnabled: false };
-    return {
-        firebaseApp: dummyApp as FirebaseApp,
-        auth: {} as Auth,
-        firestore: {} as Firestore
-    }
+    throw new Error("Attempted to call getFirebaseClientServices() from the server but it's a client-only function.");
   }
 
   if (getApps().length === 0) {
