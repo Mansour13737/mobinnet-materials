@@ -77,8 +77,8 @@ export function DataTable({ headers, data, searchTerm }: DataTableProps) {
                     {currentData.length > 0 ? currentData.map((row, rowIndex) => (
                       <TableRow key={rowIndex} className="hover:bg-accent/50">
                           <TableCell>{startIndex + rowIndex + 1}</TableCell>
-                          {row.map((cell, cellIndex) => (
-                            <TableCell key={cellIndex}>{cell || ''}</TableCell>
+                          {headers.map((_, cellIndex) => (
+                            <TableCell key={cellIndex}>{row[cellIndex] || ''}</TableCell>
                           ))}
                       </TableRow>
                     )) : (
