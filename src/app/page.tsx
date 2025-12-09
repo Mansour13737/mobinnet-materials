@@ -59,13 +59,18 @@ export default function Home() {
   const { data: excelRows, isLoading: isLoadingRows } = useCollection<ExcelRow>(selectedFileRowsRef);
 
   useEffect(() => {
-    // If there's a recently uploaded file, select it.
+    // This effect handles the initial selection of a file when the component loads
+    // or when the list of available files changes.
+    
+    // Condition 1: If there's a file that was just uploaded, select it.
     if (lastUploadedFileId) {
       setSelectedFileId(lastUploadedFileId);
-      setLastUploadedFileId(null); // Reset after selection
-    }
-    // Otherwise, if no file is selected but files exist, select the first one.
+      setLastUploadedFileId(null); // Reset after selection to prevent re-selection.
+    } 
+    // Condition 2: If no file is currently selected, AND the list of files has loaded,
+    // AND there are files available, AND we are not in the middle of previewing a new file...
     else if (!selectedFileId && excelFiles && excelFiles.length > 0 && !parsedData) {
+      // ...then select the first file in the list (which is the most recent due to the query).
       setSelectedFileId(excelFiles[0].id);
     }
   }, [excelFiles, selectedFileId, parsedData, lastUploadedFileId]);
@@ -77,7 +82,6 @@ export default function Home() {
     if (excelRows) {
         return excelRows.map(row => {
             const rowData: string[] = [];
-            // Ensure we push properties in order and only if they exist
             const columns: (keyof ExcelRow)[] = ['columnA', 'columnB', 'columnC', 'columnD', 'columnE'];
             const selectedFile = excelFiles?.find(f => f.id === selectedFileId);
             const headerCount = selectedFile?.headers?.length || 0;
@@ -130,7 +134,6 @@ export default function Home() {
     const totalRows = parsedData.rows.length;
 
     try {
-      // First, create the main file document
       const fileRef = doc(firestore, `users/${user.uid}/excelFiles`, newExcelFileId);
       const fileData = {
           id: newExcelFileId,
@@ -138,10 +141,21 @@ export default function Home() {
           uploadDate: serverTimestamp(),
           headers: parsedData.headers
       };
-      
+
       const fileBatch = writeBatch(firestore);
       fileBatch.set(fileRef, fileData);
-      await fileBatch.commit();
+      
+      // We must commit the file document first to ensure it exists before we try to add sub-collection documents.
+      await fileBatch.commit().catch(serverError => {
+        const permissionError = new FirestorePermissionError({
+          path: fileRef.path,
+          operation: 'create',
+          requestResourceData: fileData,
+        });
+        errorEmitter.emit('permission-error', permissionError);
+        // Re-throw to be caught by the outer catch block
+        throw new Error('Failed to create file document.');
+      });
       
       setUploadProgress(5); // Initial progress
 
@@ -165,7 +179,15 @@ export default function Home() {
             });
         });
 
-        await batch.commit();
+        await batch.commit().catch(serverError => {
+            const permissionError = new FirestorePermissionError({
+                path: `users/${user.uid}/excelFiles/${newExcelFileId}/excelRows`,
+                operation: 'write',
+                requestResourceData: { info: `Batch starting at row ${i}`},
+            });
+            errorEmitter.emit('permission-error', permissionError);
+            throw new Error(`Failed to upload row batch starting at index ${i}.`);
+        });
 
         const newProgress = Math.min(95, Math.round(((i + chunk.length) / totalRows) * 90) + 5);
         setUploadProgress(newProgress);
@@ -185,22 +207,12 @@ export default function Home() {
       }, 500);
 
 
-    } catch (serverError) {
-      console.error("Error uploading data:", serverError);
-      const permissionError = new FirestorePermissionError({
-          path: `users/${user.uid}/excelFiles/${newExcelFileId}`,
-          operation: 'write',
-          requestResourceData: {
-              fileName: parsedData.fileName,
-              rowCount: parsedData.rows.length,
-          },
-      });
-      errorEmitter.emit('permission-error', permissionError);
-
+    } catch (error: any) {
+      console.error("Error uploading data:", error);
       toast({
           variant: "destructive",
           title: "Upload Failed",
-          description: "There was an error uploading your data. Check the developer console for details.",
+          description: error.message || "There was an error uploading your data. Check the developer console for details.",
       });
       setIsUploading(false);
     }
