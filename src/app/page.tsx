@@ -5,7 +5,7 @@ import { ExcelImporter } from "@/components/excel-importer";
 import { DataTable } from "@/components/data-table";
 import { FileSpreadsheet, Search, Loader2, Upload, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { useFirebase, useCollection, useMemoFirebase } from "@/firebase";
+import { useFirebase, useCollection, useMemoFirebase, errorEmitter, FirestorePermissionError } from "@/firebase";
 import { collection, query, orderBy, writeBatch, doc, serverTimestamp, getDocs } from "firebase/firestore";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ExcelFile, ExcelRow } from "@/lib/types";
@@ -106,7 +106,7 @@ export default function Home() {
     setSelectedFileId(null); // Deselect any firebase file
   }
 
-  const handleUpload = async () => {
+  const handleUpload = () => {
     if (!parsedData || !user || !firestore) {
       toast({
         variant: "destructive",
@@ -119,54 +119,61 @@ export default function Home() {
     setIsUploading(true);
     const newExcelFileId = uuidv4();
 
-    try {
-      const fileRef = doc(firestore, `users/${user.uid}/excelFiles`, newExcelFileId);
-      const batch = writeBatch(firestore);
+    const fileRef = doc(firestore, `users/${user.uid}/excelFiles`, newExcelFileId);
+    const batch = writeBatch(firestore);
 
-      batch.set(fileRef, {
-          id: newExcelFileId,
-          fileName: parsedData.fileName,
-          uploadDate: serverTimestamp(),
-          headers: parsedData.headers
-      });
+    const fileData = {
+        id: newExcelFileId,
+        fileName: parsedData.fileName,
+        uploadDate: serverTimestamp(),
+        headers: parsedData.headers
+    };
+    batch.set(fileRef, fileData);
 
-      const rowsCollectionRef = collection(firestore, `users/${user.uid}/excelFiles/${newExcelFileId}/excelRows`);
-      
-      parsedData.rows.forEach((row) => {
-          const rowId = uuidv4();
-          const rowRef = doc(rowsCollectionRef, rowId);
-          batch.set(rowRef, {
-              id: rowId,
-              excelFileId: newExcelFileId,
-              columnA: row[0] || "",
-              columnB: row[1] || "",
-              columnC: row[2] || "",
-              columnD: row[3] || "",
-              columnE: row[4] || "",
-          });
-      });
+    const rowsCollectionRef = collection(firestore, `users/${user.uid}/excelFiles/${newExcelFileId}/excelRows`);
+    
+    parsedData.rows.forEach((row) => {
+        const rowId = uuidv4();
+        const rowRef = doc(rowsCollectionRef, rowId);
+        batch.set(rowRef, {
+            id: rowId,
+            excelFileId: newExcelFileId,
+            columnA: row[0] || "",
+            columnB: row[1] || "",
+            columnC: row[2] || "",
+            columnD: row[3] || "",
+            columnE: row[4] || "",
+        });
+    });
 
-      await batch.commit();
+    batch.commit().then(() => {
+        toast({
+            title: "Upload Successful",
+            description: `Successfully uploaded ${parsedData.rows.length} rows from ${parsedData.fileName}.`,
+            className: 'bg-primary text-primary-foreground'
+        });
+        setParsedData(null);
+        setLastUploadedFileId(newExcelFileId);
+    }).catch(serverError => {
+        console.error("Error uploading data:", serverError);
+        const permissionError = new FirestorePermissionError({
+            path: `users/${user.uid}/excelFiles/${newExcelFileId}`,
+            operation: 'write',
+            requestResourceData: {
+                file: fileData,
+                rowCount: parsedData.rows.length,
+            },
+        });
+        errorEmitter.emit('permission-error', permissionError);
 
-      toast({
-        title: "Upload Successful",
-        description: `Successfully uploaded ${parsedData.rows.length} rows from ${parsedData.fileName}.`,
-        className: 'bg-primary text-primary-foreground'
-      });
-
-      setParsedData(null);
-      setLastUploadedFileId(newExcelFileId);
-
-    } catch (error) {
-      console.error("Error uploading data:", error);
-      toast({
-        variant: "destructive",
-        title: "Upload Failed",
-        description: "There was an error uploading your data. Please try again.",
-      });
-    } finally {
-      setIsUploading(false);
-    }
+        toast({
+            variant: "destructive",
+            title: "Upload Failed",
+            description: "There was an error uploading your data. Check the developer console for details.",
+        });
+    }).finally(() => {
+        setIsUploading(false);
+    });
   };
 
   const handleDeleteFile = async () => {
