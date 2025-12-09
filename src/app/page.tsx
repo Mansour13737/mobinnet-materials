@@ -3,17 +3,29 @@
 import { useState, useMemo, useEffect } from "react";
 import { ExcelImporter } from "@/components/excel-importer";
 import { DataTable } from "@/components/data-table";
-import { FileSpreadsheet, Search, Loader2 } from "lucide-react";
+import { FileSpreadsheet, Search, Loader2, Upload } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useFirebase, useCollection, useMemoFirebase } from "@/firebase";
-import { collection, query, orderBy } from "firebase/firestore";
+import { collection, query, orderBy, writeBatch, doc, serverTimestamp } from "firebase/firestore";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ExcelFile, ExcelRow } from "@/lib/types";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
+import { v4 as uuidv4 } from 'uuid';
+
+interface ParsedData {
+  fileName: string;
+  headers: string[];
+  rows: string[][];
+}
 
 export default function Home() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
+  const [parsedData, setParsedData] = useState<ParsedData | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
+  const { toast } = useToast();
   const { firestore, user, isUserLoading } = useFirebase();
 
   const userFilesRef = useMemoFirebase(() => 
@@ -29,32 +41,104 @@ export default function Home() {
   const { data: excelRows, isLoading: isLoadingRows } = useCollection<ExcelRow>(selectedFileRowsRef);
 
   useEffect(() => {
-    if (!selectedFileId && excelFiles && excelFiles.length > 0) {
+    if (!selectedFileId && excelFiles && excelFiles.length > 0 && !parsedData) {
       setSelectedFileId(excelFiles[0].id);
     }
-  }, [excelFiles, selectedFileId]);
-
+  }, [excelFiles, selectedFileId, parsedData]);
+  
   const tableData = useMemo(() => {
-    return excelRows ? excelRows.map(row => [row.columnA, row.columnB, row.columnC, row.columnD, row.columnE]) : [];
-  }, [excelRows]);
+    if (parsedData) {
+      return parsedData.rows;
+    }
+    return excelRows ? excelRows.map(row => [row.columnA, row.columnB, row.columnC, row.columnD, row.columnE].filter(c => c !== undefined)) : [];
+  }, [excelRows, parsedData]);
 
   const tableHeaders = useMemo(() => {
+    if (parsedData) {
+      return parsedData.headers;
+    }
     if (excelFiles && selectedFileId) {
         const selectedFile = excelFiles.find(f => f.id === selectedFileId);
         return selectedFile?.headers || ['A', 'B', 'C', 'D', 'E'];
     }
     return ['A', 'B', 'C', 'D', 'E'];
-  }, [excelFiles, selectedFileId]);
+  }, [excelFiles, selectedFileId, parsedData]);
 
   const handleFileSelect = (fileId: string) => {
+    setParsedData(null);
     setSelectedFileId(fileId);
   }
 
-  const onNewFileImported = (fileId: string) => {
-    setSelectedFileId(fileId);
+  const onDataParsed = (data: ParsedData) => {
+    setParsedData(data);
+    setSelectedFileId(null); // Deselect any firebase file
   }
 
-  const isLoading = isUserLoading || isLoadingFiles || isLoadingRows;
+  const handleUpload = async () => {
+    if (!parsedData || !user || !firestore) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "No data to upload or user not authenticated.",
+      });
+      return;
+    }
+
+    setIsUploading(true);
+
+    try {
+      const excelFileId = uuidv4();
+      const fileRef = doc(firestore, `users/${user.uid}/excelFiles`, excelFileId);
+      const batch = writeBatch(firestore);
+
+      batch.set(fileRef, {
+          id: excelFileId,
+          fileName: parsedData.fileName,
+          uploadDate: serverTimestamp(),
+          headers: parsedData.headers
+      });
+
+      const rowsCollectionRef = collection(firestore, `users/${user.uid}/excelFiles/${excelFileId}/excelRows`);
+      
+      parsedData.rows.forEach((row) => {
+          const rowId = uuidv4();
+          const rowRef = doc(rowsCollectionRef, rowId);
+          batch.set(rowRef, {
+              id: rowId,
+              excelFileId: excelFileId,
+              columnA: row[0] || "",
+              columnB: row[1] || "",
+              columnC: row[2] || "",
+              columnD: row[3] || "",
+              columnE: row[4] || "",
+          });
+      });
+
+      await batch.commit();
+
+      toast({
+        title: "Upload Successful",
+        description: `Successfully uploaded ${parsedData.rows.length} rows from ${parsedData.fileName}.`,
+        className: 'bg-primary text-primary-foreground'
+      });
+
+      setParsedData(null);
+      setSelectedFileId(excelFileId);
+
+    } catch (error) {
+      console.error("Error uploading data:", error);
+      toast({
+        variant: "destructive",
+        title: "Upload Failed",
+        description: "There was an error uploading your data. Please try again.",
+      });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const isLoading = isUserLoading || isLoadingFiles || (isLoadingRows && !parsedData);
+  const hasData = (parsedData && parsedData.rows.length > 0) || (excelRows && excelRows.length > 0);
 
   return (
     <div className="min-h-full bg-background text-foreground flex flex-col items-center p-4 sm:p-6 md:p-8">
@@ -65,7 +149,7 @@ export default function Home() {
           </h1>
           <div className="flex flex-col sm:flex-row items-center gap-4">
             {excelFiles && excelFiles.length > 0 && (
-                 <Select onValueChange={handleFileSelect} value={selectedFileId || ''}>
+                 <Select onValueChange={handleFileSelect} value={parsedData ? '' : selectedFileId || ''}>
                  <SelectTrigger className="w-[280px]">
                    <SelectValue placeholder="Select an imported file" />
                  </SelectTrigger>
@@ -78,7 +162,17 @@ export default function Home() {
                  </SelectContent>
                </Select>
             )}
-            <ExcelImporter onNewFileImported={onNewFileImported} />
+            <ExcelImporter onDataParsed={onDataParsed} disabled={isUploading} />
+            {parsedData && (
+              <Button onClick={handleUpload} disabled={isUploading}>
+                {isUploading ? (
+                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                ) : (
+                  <Upload className="mr-2 h-5 w-5" />
+                )}
+                {isUploading ? 'Uploading...' : 'Upload to Database'}
+              </Button>
+            )}
           </div>
         </header>
         <main className="w-full flex-grow flex flex-col">
@@ -87,7 +181,7 @@ export default function Home() {
               <Loader2 className="h-16 w-16 text-muted-foreground animate-spin mb-4" />
               <p className="text-muted-foreground">Loading data...</p>
             </div>
-          ) : excelRows && excelRows.length > 0 ? (
+          ) : hasData ? (
             <>
               <div className="relative mb-4">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />

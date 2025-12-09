@@ -5,18 +5,17 @@ import * as XLSX from 'xlsx';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { UploadCloud } from 'lucide-react';
-import { useFirebase, initiateAnonymousSignIn, addDocumentNonBlocking } from '@/firebase';
-import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore';
-import { v4 as uuidv4 } from 'uuid';
+import { useFirebase, initiateAnonymousSignIn } from '@/firebase';
 
 interface ExcelImporterProps {
-  onNewFileImported: (fileId: string) => void;
+  onDataParsed: (data: { fileName: string, headers: string[], rows: string[][] }) => void;
+  disabled?: boolean;
 }
 
-export function ExcelImporter({ onNewFileImported }: ExcelImporterProps) {
+export function ExcelImporter({ onDataParsed, disabled = false }: ExcelImporterProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
-  const { auth, user, firestore } = useFirebase();
+  const { auth, user } = useFirebase();
 
   useEffect(() => {
     if (auth && !user) {
@@ -26,14 +25,16 @@ export function ExcelImporter({ onNewFileImported }: ExcelImporterProps) {
 
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file || !user || !firestore) {
-      if (!user) {
-         toast({
-          variant: "destructive",
-          title: "Authentication Error",
-          description: "You must be signed in to import files.",
-        });
-      }
+    if (!file) {
+      return;
+    }
+    
+    if (!user) {
+       toast({
+        variant: "destructive",
+        title: "Authentication Error",
+        description: "You must be signed in to import files.",
+      });
       return;
     }
 
@@ -59,50 +60,19 @@ export function ExcelImporter({ onNewFileImported }: ExcelImporterProps) {
         const headers = jsonData[0].slice(0, 5).map(String);
         const rows = jsonData.slice(1).map(row => row.slice(0, 5).map(String));
 
-        const excelFileId = uuidv4();
-        const fileRef = doc(firestore, `users/${user.uid}/excelFiles`, excelFileId);
-
-        const batch = writeBatch(firestore);
-
-        batch.set(fileRef, {
-            id: excelFileId,
-            fileName: file.name,
-            uploadDate: serverTimestamp(),
-            headers: headers
-        });
-
-        const rowsCollectionRef = collection(firestore, `users/${user.uid}/excelFiles/${excelFileId}/excelRows`);
-        
-        rows.forEach((row) => {
-            const rowId = uuidv4();
-            const rowRef = doc(rowsCollectionRef, rowId);
-            batch.set(rowRef, {
-                id: rowId,
-                excelFileId: excelFileId,
-                columnA: row[0] || "",
-                columnB: row[1] || "",
-                columnC: row[2] || "",
-                columnD: row[3] || "",
-                columnE: row[4] || "",
-            });
-        });
-
-        await batch.commit();
-
-        onNewFileImported(excelFileId);
+        onDataParsed({ fileName: file.name, headers, rows });
 
         toast({
-          title: "Import Successful",
-          description: `Successfully imported and saved ${rows.length} rows from ${file.name}.`,
-          className: 'bg-primary text-primary-foreground'
+          title: "File Ready for Upload",
+          description: `${file.name} has been processed. Click 'Upload to Database' to save it.`,
         });
 
       } catch (error) {
-        console.error("Error processing and saving Excel file:", error);
+        console.error("Error processing Excel file:", error);
         toast({
           variant: "destructive",
           title: "Import Failed",
-          description: "There was an error saving the Excel file. Please try again.",
+          description: "There was an error reading the Excel file. Please try again.",
         });
       } finally {
         if(fileInputRef.current) {
@@ -145,8 +115,9 @@ export function ExcelImporter({ onNewFileImported }: ExcelImporterProps) {
         accept=".xlsx, .xls"
         className="hidden"
         aria-hidden="true"
+        disabled={disabled}
       />
-      <Button onClick={handleButtonClick} size="lg">
+      <Button onClick={handleButtonClick} size="lg" disabled={disabled}>
         <UploadCloud className="mr-2 h-5 w-5" />
         Import Excel File
       </Button>
