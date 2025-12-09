@@ -75,36 +75,53 @@ export default function Home() {
     }
   }, [excelFiles, selectedFileId, parsedData, lastUploadedFileId]);
   
+  const selectedFile = useMemo(() => {
+      if (!selectedFileId || !excelFiles) return null;
+      return excelFiles.find(f => f.id === selectedFileId);
+  }, [excelFiles, selectedFileId]);
+
   const tableData = useMemo(() => {
+    // If we are previewing a newly parsed file, use its data directly.
     if (parsedData) {
       return parsedData.rows;
     }
-    if (excelRows) {
+    
+    // If we are displaying data from Firestore.
+    if (excelRows && selectedFile) {
+        // Map over the Firestore rows to format them for the table.
         return excelRows.map(row => {
             const rowData: string[] = [];
+            // Dynamically get column keys based on the number of headers.
             const columns: (keyof ExcelRow)[] = ['columnA', 'columnB', 'columnC', 'columnD', 'columnE'];
-            const selectedFile = excelFiles?.find(f => f.id === selectedFileId);
-            const headerCount = selectedFile?.headers?.length || 0;
+            const headerCount = selectedFile.headers?.length || 0;
 
+            // Iterate only up to the number of actual headers for the selected file.
             for (let i = 0; i < headerCount; i++) {
-                rowData.push(row[columns[i]] || "");
+                const columnKey = columns[i];
+                // Push the data from the corresponding column, or an empty string if it's missing.
+                rowData.push(row[columnKey] || "");
             }
             return rowData;
         });
     }
+
+    // Return an empty array if no data source is available.
     return [];
-  }, [excelRows, parsedData, excelFiles, selectedFileId]);
+  }, [excelRows, parsedData, selectedFile]);
+
 
   const tableHeaders = useMemo(() => {
+    // Use headers from the parsed data if available (for preview).
     if (parsedData) {
       return parsedData.headers;
     }
-    if (excelFiles && selectedFileId) {
-        const selectedFile = excelFiles.find(f => f.id === selectedFileId);
-        return selectedFile?.headers || [];
+    // Otherwise, use headers from the selected file in Firestore.
+    if (selectedFile) {
+        return selectedFile.headers || [];
     }
+    // Return empty array if no headers are available.
     return [];
-  }, [excelFiles, selectedFileId, parsedData]);
+  }, [selectedFile, parsedData]);
 
   const handleFileSelect = (fileId: string) => {
     if (fileId) {
@@ -276,7 +293,7 @@ export default function Home() {
 
   const isLoading = isUserLoading || isLoadingFiles || (isLoadingRows && !parsedData);
   const hasData = (parsedData && parsedData.rows.length > 0) || (tableData && tableData.length > 0);
-  const selectedFileName = excelFiles?.find(f => f.id === selectedFileId)?.fileName;
+  const selectedFileName = selectedFile?.fileName;
 
   return (
     <>
